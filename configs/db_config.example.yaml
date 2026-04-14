@@ -1,0 +1,8 @@
+# MongoDB connection config template
+# Copy this file to db_config.yaml and fill in your credentials.
+# db_config.yaml is git-ignored — your credentials stay local.
+
+mongo:
+  uri: "mongodb+srv://<user>:<password>@<cluster>.mongodb.net"
+  database: "tinkaton"
+  collection: "charger_logs"
