@@ -205,3 +205,57 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Custom ignore rules
+CLAUDE.*
+
+# ============================================
+# Personal Data (NEVER commit to public repo)
+# ============================================
+
+# Data directories (keep structure via .gitkeep and README)
+data/**
+!data/README.md
+!data/**/
+!data/**/.gitkeep
+output/
+outputs/**
+!outputs/.gitkeep
+exports/
+
+# Charger server logs
+*.log
+logs/
+
+# MongoDB related
+*.bson
+*.mongodump
+dump/
+mongo_backup/
+
+# Common data formats
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.json
+!package.json
+!pyproject.json
+*.parquet
+*.feather
+*.pickle
+*.pkl
+*.h5
+*.hdf5
+
+# Database credentials & connection strings
+*.pem
+*.key
+*.crt
+mongouri.txt
+db_config.*
+!db_config.example.*
+
+# Config secrets
+configs/*
+!configs/*.example.*
