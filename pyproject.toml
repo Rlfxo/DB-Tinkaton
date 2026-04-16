@@ -37,6 +37,13 @@ dev = [
     "ruff>=0.4",
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tinkaton"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
