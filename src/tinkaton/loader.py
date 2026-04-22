@@ -22,6 +22,7 @@ __all__ = [
     "logs_to_dataframe",
     "meter_values_to_dataframe",
     "meter_values_to_long_dataframe",
+    "transaction_events_to_dataframe",
 ]
 
 _MEASURAND_MAP: dict[str, tuple[str, str]] = {
@@ -135,6 +136,8 @@ def meter_values_to_long_dataframe(logs: list[dict]) -> pd.DataFrame:
         meta = log.get("meta", {}) or {}
         if meta.get("action") != "MeterValues":
             continue
+        if meta.get("serverRecvType") == "SEND":
+            continue
         payload = meta.get("payload") or {}
         base = {
             "server_timestamp": _server_timestamp(log),
@@ -168,6 +171,102 @@ def meter_values_to_long_dataframe(logs: list[dict]) -> pd.DataFrame:
     return df.sort_values(["timestamp", "measurand"]).reset_index(drop=True)
 
 
+def transaction_events_to_dataframe(logs: list[dict]) -> pd.DataFrame:
+    """Extract StartTransaction and StopTransaction events as session rows.
+
+    OCPP logs a RECV ``CALL`` from the charger and a SEND ``CALLRESULT``
+    from the server for each transaction. StartTransaction CALL carries
+    ``timestamp``, ``connectorId``, ``idTag``, ``meterStart`` — but *not*
+    ``transactionId``, which is assigned by the server in CALLRESULT.
+    We pair the two by ``meta.messageId`` to recover it.
+
+    StopTransaction CALL already carries ``transactionId`` along with
+    ``timestamp``, ``idTag``, ``meterStop``, and ``reason``.
+
+    Returns one row per ``(charger_id, transaction_id)`` with columns
+    ``charger_id``, ``transaction_id``, ``connector_id``, ``start_ts``,
+    ``stop_ts``, ``start_id_tag``, ``stop_id_tag``, ``meter_start_wh``,
+    ``meter_stop_wh``, ``stop_reason``. Orphan starts without a matching
+    CALLRESULT are dropped (no ``transaction_id`` to key on).
+    """
+    start_recv: dict[str, dict] = {}
+    start_send_tx: dict[str, Any] = {}
+    stop_recv: list[dict] = []
+
+    for log in logs:
+        meta = log.get("meta") or {}
+        action = meta.get("action")
+        recv_type = meta.get("serverRecvType")
+        mid = meta.get("messageId")
+        if action == "StartTransaction":
+            if recv_type == "RECV" and mid is not None:
+                start_recv[mid] = log
+            elif recv_type == "SEND" and mid is not None:
+                pl = meta.get("payload") or {}
+                if "transactionId" in pl:
+                    start_send_tx[mid] = pl["transactionId"]
+        elif action == "StopTransaction" and recv_type == "RECV":
+            stop_recv.append(log)
+
+    records: dict[tuple, dict] = {}
+    for mid, log in start_recv.items():
+        meta = log.get("meta") or {}
+        pl = meta.get("payload") or {}
+        tx_id = start_send_tx.get(mid)
+        if tx_id is None:
+            continue
+        key = (meta.get("chargerId"), tx_id)
+        records.setdefault(
+            key,
+            {
+                "charger_id": meta.get("chargerId"),
+                "transaction_id": tx_id,
+                "connector_id": pl.get("connectorId"),
+                "start_ts": pl.get("timestamp"),
+                "start_id_tag": pl.get("idTag"),
+                "meter_start_wh": _coerce_float(pl.get("meterStart")),
+                "stop_ts": None,
+                "stop_id_tag": None,
+                "meter_stop_wh": None,
+                "stop_reason": None,
+            },
+        )
+
+    for log in stop_recv:
+        meta = log.get("meta") or {}
+        pl = meta.get("payload") or {}
+        tx_id = pl.get("transactionId")
+        if tx_id is None:
+            continue
+        key = (meta.get("chargerId"), tx_id)
+        row = records.setdefault(
+            key,
+            {
+                "charger_id": meta.get("chargerId"),
+                "transaction_id": tx_id,
+                "connector_id": None,
+                "start_ts": None,
+                "start_id_tag": None,
+                "meter_start_wh": None,
+                "stop_ts": None,
+                "stop_id_tag": None,
+                "meter_stop_wh": None,
+                "stop_reason": None,
+            },
+        )
+        row["stop_ts"] = pl.get("timestamp")
+        row["stop_id_tag"] = pl.get("idTag")
+        row["meter_stop_wh"] = _coerce_float(pl.get("meterStop"))
+        row["stop_reason"] = pl.get("reason")
+
+    df = pd.DataFrame(list(records.values()))
+    if df.empty:
+        return df
+    df["start_ts"] = pd.to_datetime(df["start_ts"], utc=True, errors="coerce")
+    df["stop_ts"] = pd.to_datetime(df["stop_ts"], utc=True, errors="coerce")
+    return df.sort_values(["charger_id", "start_ts"], na_position="last").reset_index(drop=True)
+
+
 def meter_values_to_dataframe(logs: list[dict]) -> pd.DataFrame:
     """Flatten MeterValues to wide form — one row per sample timestamp.
 
@@ -184,6 +283,8 @@ def meter_values_to_dataframe(logs: list[dict]) -> pd.DataFrame:
     for log in logs:
         meta = log.get("meta", {}) or {}
         if meta.get("action") != "MeterValues":
+            continue
+        if meta.get("serverRecvType") == "SEND":
             continue
         payload = meta.get("payload") or {}
         base = {
