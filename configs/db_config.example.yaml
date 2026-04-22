@@ -1,8 +1,9 @@
-# MongoDB connection config template
-# Copy this file to db_config.yaml and fill in your credentials.
-# db_config.yaml is git-ignored — your credentials stay local.
+# MongoDB connection config template.
+# Copy this file to db_config.yaml and replace placeholders with your values.
+# Password is NOT stored — scripts prompt at runtime via getpass.
 
 mongo:
-  uri: "mongodb+srv://<user>:<password>@<cluster>.mongodb.net"
-  database: "tinkaton"
-  collection: "charger_logs"
+  uri_template: "mongodb+srv://{username}:{password}@<cluster>.mongodb.net/?retryWrites=true&w=majority"
+  username: "<atlas-user>"
+  database: "<db-name>"
+  collection: "<collection-name>"

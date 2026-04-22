@@ -259,3 +259,10 @@ db_config.*
 # Config secrets
 configs/*
 !configs/*.example.*
+
+# Reports containing operator-specific statistics (regeneratable outputs)
+# Charger IDs, per-model distributions, fleet stats must not land in a public repo.
+reports/
+
+# macOS
+.DS_Store
