@@ -313,3 +313,73 @@ def test_estimate_icap_per_charger_empty_input():
     out = estimate_icap_per_charger(pd.DataFrame())
     assert out.empty
     assert "i_cap_observed_a" in out.columns
+
+
+def test_derive_station_id_strips_trailing_unit_digits():
+    from tinkaton.transform import derive_station_id
+
+    # Synthetic IDs in the real operator's naming shape: ``<region><site><unit>``
+    # where the last three digits are the unit number within a station.
+    assert derive_station_id("999ABCDEFG006") == "999ABCDEFG"
+    assert derive_station_id("099XYZSITE01001") == "099XYZSITE01"
+    assert derive_station_id("888STATION023") == "888STATION"
+
+
+def test_derive_station_id_handles_none_and_unconventional():
+    from tinkaton.transform import derive_station_id
+
+    assert derive_station_id(None) is None
+    assert derive_station_id("") is None
+    # Shorter IDs without a 3-digit suffix fall through unchanged.
+    assert derive_station_id("ABC12") == "ABC12"
+
+
+def test_build_station_clusters_groups_and_flags_lp_range():
+    from tinkaton.transform import build_station_clusters
+
+    sessions = pd.DataFrame(
+        {
+            "charger_id": (
+                ["STATION001"] * 5
+                + ["STATION002"] * 3
+                + ["OTHER001"] * 8
+                + ["OTHER002"] * 7
+                + ["BIG001"] * 20
+            ),
+        }
+    )
+    out = build_station_clusters(sessions, lp_min_chargers=2, lp_max_chargers=2)
+    by_station = out.set_index("station_id")
+    assert "STATION" in by_station.index
+    assert by_station.loc["STATION", "n_chargers"] == 2
+    assert by_station.loc["STATION", "n_sessions"] == 8
+    # Only STATION has exactly 2 chargers in range
+    assert bool(by_station.loc["STATION", "is_lp_candidate"]) is True
+    assert bool(by_station.loc["BIG", "is_lp_candidate"]) is False
+
+
+def test_build_station_clusters_attaches_models_from_manifest():
+    from tinkaton.transform import build_station_clusters
+
+    sessions = pd.DataFrame(
+        {"charger_id": ["STATION001", "STATION002", "OTHER001"]}
+    )
+    manifest = pd.DataFrame(
+        {
+            "charger_id": ["STATION001", "STATION002", "OTHER001"],
+            "model": ["ELA007C01", "ELA007C02", "E01AS007K10KR0101"],
+        }
+    )
+    out = build_station_clusters(sessions, manifest=manifest)
+    by_station = out.set_index("station_id")
+    assert by_station.loc["STATION", "models"] == "ELA007C01|ELA007C02"
+    assert by_station.loc["OTHER", "models"] == "E01AS007K10KR0101"
+
+
+def test_build_station_clusters_empty_input():
+    from tinkaton.transform import build_station_clusters
+
+    out = build_station_clusters(pd.DataFrame())
+    assert out.empty
+    assert "station_id" in out.columns
+    assert "is_lp_candidate" in out.columns

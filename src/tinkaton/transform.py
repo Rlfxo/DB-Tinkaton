@@ -10,6 +10,7 @@ The canonical output schema is defined in HANDOFF_ModelPipeline v2 §5.2.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -22,6 +23,8 @@ __all__ = [
     "extract_initial_profile",
     "SessionAggregateConfig",
     "estimate_icap_per_charger",
+    "derive_station_id",
+    "build_station_clusters",
 ]
 
 
@@ -398,6 +401,95 @@ def estimate_icap_per_charger(
         )
 
     return pd.DataFrame(rows).sort_values("charger_id").reset_index(drop=True)
+
+
+_STATION_ID_RE = re.compile(r"^(.*?)(\d{3})$")
+
+
+def derive_station_id(charger_id: str | None) -> str | None:
+    """Return the station prefix implied by a ``chargerId``.
+
+    The operator's naming convention encodes a unit number as the last
+    three digits of the identifier (e.g. ``<prefix>006``); the portion
+    before those digits is the physical station. Returns ``None`` for a
+    missing ID and the input unchanged when no three-digit suffix is
+    found.
+    """
+    if not charger_id or not isinstance(charger_id, str):
+        return None
+    m = _STATION_ID_RE.match(charger_id)
+    return m.group(1) if m else charger_id
+
+
+def build_station_clusters(
+    sessions: pd.DataFrame,
+    *,
+    manifest: pd.DataFrame | None = None,
+    lp_min_chargers: int = 10,
+    lp_max_chargers: int = 30,
+) -> pd.DataFrame:
+    """Aggregate charger-level session counts into station-level rows.
+
+    Each station is keyed by :func:`derive_station_id` applied to
+    ``charger_id``. The optional ``manifest`` should map ``charger_id``
+    to ``model`` (and any metadata); model values are collapsed into a
+    pipe-separated ``models`` string per station.
+
+    The returned DataFrame has columns ``station_id``, ``n_chargers``,
+    ``charger_ids`` (pipe-separated), ``models`` (pipe-separated unique
+    models), ``n_sessions``, ``median_sessions_per_charger``,
+    ``is_lp_candidate`` (True when ``lp_min_chargers ≤ n_chargers ≤
+    lp_max_chargers``), sorted by ``n_chargers`` descending.
+    """
+    if sessions.empty:
+        return pd.DataFrame(
+            columns=[
+                "station_id",
+                "n_chargers",
+                "charger_ids",
+                "models",
+                "n_sessions",
+                "median_sessions_per_charger",
+                "is_lp_candidate",
+            ]
+        )
+
+    charger_sessions = (
+        sessions.groupby("charger_id").size().rename("n_sessions").reset_index()
+    )
+    charger_sessions["station_id"] = charger_sessions["charger_id"].map(
+        derive_station_id
+    )
+    if manifest is not None and not manifest.empty and "model" in manifest.columns:
+        charger_sessions = charger_sessions.merge(
+            manifest[["charger_id", "model"]], on="charger_id", how="left"
+        )
+
+    def _concat_unique_strings(values: pd.Series) -> str:
+        uniq = sorted({str(v) for v in values.dropna().tolist() if v})
+        return "|".join(uniq)
+
+    grouped = charger_sessions.groupby("station_id", dropna=True).agg(
+        n_chargers=("charger_id", "nunique"),
+        charger_ids=("charger_id", _concat_unique_strings),
+        n_sessions=("n_sessions", "sum"),
+        median_sessions_per_charger=("n_sessions", "median"),
+    )
+    if "model" in charger_sessions.columns:
+        grouped["models"] = charger_sessions.groupby("station_id")["model"].apply(
+            _concat_unique_strings
+        )
+    else:
+        grouped["models"] = ""
+
+    grouped = grouped.reset_index()
+    grouped["is_lp_candidate"] = (
+        (grouped["n_chargers"] >= lp_min_chargers)
+        & (grouped["n_chargers"] <= lp_max_chargers)
+    )
+    return grouped.sort_values(
+        ["n_chargers", "n_sessions"], ascending=False
+    ).reset_index(drop=True)
 
 
 def _apply_transaction_events(
