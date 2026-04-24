@@ -111,3 +111,46 @@ def test_clean_sessions_empty_input():
     assert result.clean.empty
     assert result.rejected.empty
     assert result.summary == {}
+
+
+def test_clean_sessions_respects_charger_blacklist():
+    df = pd.DataFrame(
+        [
+            _row(transaction_id=1) | {"charger_id": "GOOD_CHARGER"},
+            _row(transaction_id=2) | {"charger_id": "BAD_CHARGER"},
+            _row(transaction_id=3) | {"charger_id": "BAD_CHARGER"},
+        ]
+    )
+    from tinkaton.cleaner import SessionCleanConfig
+
+    cfg = SessionCleanConfig(blacklist_charger_ids=("BAD_CHARGER",))
+    result = clean_sessions(df, config=cfg)
+    assert len(result.clean) == 1
+    assert result.clean.iloc[0]["charger_id"] == "GOOD_CHARGER"
+    assert len(result.rejected) == 2
+    assert set(result.rejected["rejection_reason"]) == {"charger_blacklisted"}
+
+
+def test_clean_sessions_default_blacklist_drops_known_broken_charger():
+    df = pd.DataFrame(
+        [
+            _row(transaction_id=1) | {"charger_id": "003DJKCRUN003"},
+            _row(transaction_id=2) | {"charger_id": "NORMAL_CHARGER"},
+        ]
+    )
+    result = clean_sessions(df)
+    assert len(result.clean) == 1
+    assert result.clean.iloc[0]["charger_id"] == "NORMAL_CHARGER"
+    assert result.rejected.iloc[0]["rejection_reason"] == "charger_blacklisted"
+
+
+def test_clean_sessions_blacklist_can_be_disabled():
+    df = pd.DataFrame(
+        [_row(transaction_id=1) | {"charger_id": "003DJKCRUN003"}]
+    )
+    from tinkaton.cleaner import SessionCleanConfig
+
+    cfg = SessionCleanConfig(blacklist_charger_ids=())
+    result = clean_sessions(df, config=cfg)
+    assert len(result.clean) == 1
+    assert len(result.rejected) == 0

@@ -95,6 +95,12 @@ class SessionCleanConfig:
     A session is rejected when any rule fires. The default values target
     a 7 kW single-phase AC charger (I_cap = 31.2 A, V ≈ 220 V →
     theoretical peak ≈ 6.86 kWh/h).
+
+    ``blacklist_charger_ids`` drops sessions by ``charger_id`` regardless
+    of any other metric. The default includes ``003DJKCRUN003``, the
+    single charger whose only session had ``mean_current_a = 0``
+    (verified by the 2026-04-23 P1 audit, see
+    ``reports/p1_anomaly_audit.md``).
     """
 
     min_duration_min: float = 0.5
@@ -104,6 +110,7 @@ class SessionCleanConfig:
     max_energy_rate_kwh_per_hour: float = 7.5  # 6.86 theoretical + 10% margin
     require_positive_duration: bool = True
     allowed_stop_reasons: tuple[str, ...] | None = None
+    blacklist_charger_ids: tuple[str, ...] = ("003DJKCRUN003",)
 
     def describe(self) -> list[str]:
         lines = [
@@ -116,6 +123,8 @@ class SessionCleanConfig:
         ]
         if self.allowed_stop_reasons is not None:
             lines.append(f"allowed_stop_reasons      = {list(self.allowed_stop_reasons)}")
+        if self.blacklist_charger_ids:
+            lines.append(f"blacklist_charger_ids     = {list(self.blacklist_charger_ids)}")
         return lines
 
 
@@ -132,6 +141,11 @@ def _evaluate_rejection(
     row: pd.Series, cfg: SessionCleanConfig
 ) -> str | None:
     """Return a reason string when the row fails any rule, else ``None``."""
+    if cfg.blacklist_charger_ids:
+        charger_id = row.get("charger_id")
+        if charger_id in cfg.blacklist_charger_ids:
+            return "charger_blacklisted"
+
     duration = row.get("duration_min")
     if cfg.require_positive_duration and (pd.isna(duration) or duration <= 0):
         return "non_positive_duration"
