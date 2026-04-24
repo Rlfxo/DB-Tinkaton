@@ -1,0 +1,64 @@
+# LP simulation configuration template.
+# Copy to configs/lp_simulation.yaml and fill in the operator-confirmed
+# values. The real file is git-ignored because P_contract and similar
+# values are operator-specific business data.
+
+station:
+  id: "<STATION_ID>"                 # e.g. "001SENGC02"
+  p_contract_kw: 0.0                 # Confirmed operator contract — AC allocation only
+  p_contract_source: >-
+    Document here the provenance of the value (internal team, date, notes).
+  dc_allocation_kw: 0.0              # If DC sits on a separate circuit, record its share here
+  total_agreement_kw: 0.0
+
+lp_constants:
+  eta_steady: 0.98                   # η from Phase A + Phase B P90 validation
+  i_cap_a: 30.0                      # fleet-median observed I_cap
+  voltage_v: 220.0
+  per_charger_max_kw: 6.468          # = 220 * 0.98 * 30 / 1000
+  slot_minutes: 1                    # daily horizon = 1440 slots
+
+scope:
+  design_scope_n_chargers: 25        # operator-designed fleet size
+  excluded_charger_ids:               # chargers to drop from LP (e.g. post-commissioning additions)
+    - "<CHARGER_ID_TO_EXCLUDE>"
+  rationale: >-
+    Describe the reasoning for the LP scope here — typically: align the
+    LP roster with the operator's designed and contracted infrastructure
+    so that N x per_charger_max ≈ P_contract.
+
+sweep:
+  n_values: [10, 15, 20, 25]         # main-text N sweep (design scope)
+  n_values_appendix: [26]            # full physical roster sensitivity
+  beta_values: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+  seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  modes: ["offline"]                 # add "rolling" when the rolling horizon mode ships
+  strategies:
+    - "StatusQuo"
+    - "LoadBalance"
+    - "LP-ML"
+    - "LP-Hybrid"
+    - "LP-User"
+  p_contract_sensitivity_kw: [100, 129, 150, 175, 200]
+
+test_period:
+  start_utc: "YYYY-MM-DDTHH:MM:SS"   # matches split_definition.json cutoff
+  end_utc: "YYYY-MM-DDTHH:MM:SS"
+  source: "split_definition.json cutoffs.val_end_exclusive_of_test"
+
+solver:
+  primary: "HIGHS"
+  fallback: "CLARABEL"
+  max_seconds_per_day: 30
+
+inputs:
+  sessions_parquet: "data/phase_b/session_dataset_clean_v2.parquet"
+  manifest_csv: "data/raw/phase_b/_charger_manifest.csv"
+  epsilon_primary: "results/xgb_residuals.parquet"
+  epsilon_sensitivity: "results/lstm_residuals.parquet"
+
+outputs:
+  results_dir: "results/lp_sweep"
+  figures_dir: "outputs/lp_sweep"
+  summary_csv: "results/lp_sweep/beta_sweep.csv"
+  signature_figure: "outputs/lp_sweep/beta_curve.png"
